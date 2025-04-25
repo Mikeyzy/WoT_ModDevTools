@@ -4,9 +4,12 @@ This package is designed to help you to create your own World of Tanks mod.
 
 It contains the following tools:
 	1. Client Unpacker
+		- [root/ClientData/utility/clientUnpacker.py]
 		- Extract selected data files from the game client.
 		- Decompile game scripts.
 	2. Python 2.7 64 bit (Same as WoT Python version)
+		- [root/Python27]
+		- Necessary for decompiling game scripts.
 
 ***Dependencies***
 	To run Client Unpacker, you will need Python 3.8 or higher.
