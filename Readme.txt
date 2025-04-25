@@ -20,5 +20,5 @@ It contains the following tools:
 
 V1.0.0 - Initial release
 	Python 2.7 64 bit with necessary packages for decompiling game scripts
-	Client Unpacker for extracting game data and decompiling game scripts
+	Client Unpacker for automating extracting game data and decompiling game scripts
 
