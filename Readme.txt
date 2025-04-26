@@ -53,8 +53,18 @@ Here is the default config file:
 			# enable multithreaded decompilation
 			"multithread": true,
 			# decompiled scripts output dir
-			"output": "scripts_d"
+			"output": "scripts_d",
+			# use decompiled scripts instead of pyc
+			"pythonPathUseDecompiled": true
 		}
+	},
+	"multithread": {
+		# number of threads
+		# -1=All threads
+		# 0=Single thread
+		# int=Number of threads
+		# float<0~1>=Percentage of all threads
+		"limit": -1
 	}
 }
 

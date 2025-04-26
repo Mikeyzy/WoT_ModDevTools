@@ -1,6 +1,6 @@
 #!python3
 import _cmdargs
-import os, argparse, shutil, subprocess, sys, time, traceback
+import os, argparse, shutil, subprocess, sys, time, traceback, random
 from typing import List
 
 if sys.version_info.major < 3 or sys.version_info.minor < 8:
@@ -8,13 +8,14 @@ if sys.version_info.major < 3 or sys.version_info.minor < 8:
 	sys.exit(1)
 
 parser = argparse.ArgumentParser(os.path.basename(__file__), description='World of Tanks Mod Dev Tools - Client Unpacker')
+parser.add_argument('-V', '--version', action='version', version=f'World of Tanks Mod Dev Tools - Client Unpacker V{_cmdargs.VERSION}')
 parser.add_argument('-v', '--verbose', dest='verbose', nargs='?', type=int, const=0, default=2, help='Set verbosity level (1=Info, 2=Warning[Default], 3=Error, 4=Progress)')
 parser.add_argument('-r', '--reset-config', dest='reset', action='store_true', default=False, help='Reset config file to default and exit')
-parser.add_argument('-o', '--overwrite', dest='overwrite', action='store', default='a', help='Overwrite action when prompt (y=overwrite, n=skip, a=ask[Default])')
-parser.add_argument('--dir-python', dest='dirPython', action='store', default=None, help='Set path to python27 directory')
-parser.add_argument('--dir-7z', dest='dir7z', action='store', default=None, help='Set path to 7z directory')
-parser.add_argument('--dir-wot', dest='dirWot', action='store', default=None, help='Set path to World of Tanks client directory')
-parser.add_argument('-V', '--version', action='version', version=f'World of Tanks Mod Dev Tools - Client Unpacker V{_cmdargs.VERSION}')
+parser.add_argument('-o', '--overwrite', dest='overwrite', default='a', help='Overwrite action when prompt (y=overwrite, n=skip, a=ask[Default])')
+parser.add_argument('--dir-python', dest='dirPython', default=None, help='Set path to python27 directory')
+parser.add_argument('--dir-7z', dest='dir7z', default=None, help='Set path to 7z directory')
+parser.add_argument('--dir-wot', dest='dirWot', default=None, help='Set path to World of Tanks client directory')
+parser.add_argument('-t', '--thread', dest='thread', default=None, help='Override thread limit (-1[Default]=All threads, 0=Single thread, int=Number of threads, float<0~1>=Percentage of all threads)')
 
 _cmdargs.ARGUMENTS = parser.parse_args()
 
@@ -65,7 +66,68 @@ PKG_EXTRACT_MULTITHREAD = DICT_WORKFLOW["extract"]["multithread"]
 DECOMPILE_OUTPUT = DICT_WORKFLOW["decompile"]["output"]
 DECOMPILE_OVERWRITE = DICT_WORKFLOW["decompile"]["overwrite"]
 DECOMPILE_MULTITHREAD = DICT_WORKFLOW["decompile"]["multithread"]
-THREAD_LIMIT = int(os.getenv('NUMBER_OF_PROCESSORS', '4'))
+
+DECOMPILE_USE_DECOMPILED = DICT_WORKFLOW["decompile"].get("pythonPathUseDecompiled", True)
+
+if _cmdargs.ARGUMENTS.thread is not None:
+	try:
+		# int
+		THREAD_LIMIT = int(_cmdargs.ARGUMENTS.thread)
+		if THREAD_LIMIT < 0:
+			# use all threads
+			THREAD_LIMIT = int(os.getenv('NUMBER_OF_PROCESSORS', '4'))
+		elif THREAD_LIMIT == 0:
+			# single thread
+			THREAD_LIMIT = 1
+			PKG_EXTRACT_MULTITHREAD = False
+			DECOMPILE_MULTITHREAD = False
+		else:
+			# thread count
+			THREAD_LIMIT = min(int(_cmdargs.ARGUMENTS.thread), int(os.getenv('NUMBER_OF_PROCESSORS', '4')))
+	except ValueError:
+		try:
+			# float
+			THREAD_LIMIT = min(float(_cmdargs.ARGUMENTS.thread), 1)
+			allThreads = int(os.getenv('NUMBER_OF_PROCESSORS', '4'))
+			THREAD_LIMIT = round(THREAD_LIMIT * allThreads)
+			if THREAD_LIMIT <= 1:
+				# single thread
+				THREAD_LIMIT = 1
+				PKG_EXTRACT_MULTITHREAD = False
+				DECOMPILE_MULTITHREAD = False
+			else:
+				THREAD_LIMIT = min(THREAD_LIMIT, int(os.getenv('NUMBER_OF_PROCESSORS', '4')))
+		except ValueError:
+			# error
+			THREAD_LIMIT = int(os.getenv('NUMBER_OF_PROCESSORS', '4'))
+else:
+	# check config
+	THREAD_LIMIT = _shared.DICT_CONFIG.get('multithread', {}).get('limit', -1)
+	if isinstance(THREAD_LIMIT, int):
+		if THREAD_LIMIT < 0:
+			# use all threads
+			THREAD_LIMIT = int(os.getenv('NUMBER_OF_PROCESSORS', '4'))
+		elif THREAD_LIMIT == 0:
+			# single thread
+			THREAD_LIMIT = 1
+			PKG_EXTRACT_MULTITHREAD = False
+			DECOMPILE_MULTITHREAD = False
+		else:
+			# thread count
+			THREAD_LIMIT = min(THREAD_LIMIT, int(os.getenv('NUMBER_OF_PROCESSORS', '4')))
+	elif isinstance(THREAD_LIMIT, float):
+		allThreads = int(os.getenv('NUMBER_OF_PROCESSORS', '4'))
+		THREAD_LIMIT = round(THREAD_LIMIT * allThreads)
+		if THREAD_LIMIT <= 1:
+			# single thread
+			THREAD_LIMIT = 1
+			PKG_EXTRACT_MULTITHREAD = False
+			DECOMPILE_MULTITHREAD = False
+		else:
+			THREAD_LIMIT = min(THREAD_LIMIT, int(os.getenv('NUMBER_OF_PROCESSORS', '4')))
+	else:
+		# invalid
+		THREAD_LIMIT = int(os.getenv('NUMBER_OF_PROCESSORS', '4'))
 
 CMD_7Z_EXTRACT = f'"{PATH_7Z}" ''x -mmt -tzip -y "{PATH_FILE}" -o"{DIR_OUTPUT}"'
 
@@ -76,8 +138,15 @@ STR_PROGRESS_DISPLAY = r'-\|/'
 if __name__ == '__main__':
 	tsStart = time.monotonic()
 	# get client version
+	_shared.verboseOutput(f'Thread Limit: {THREAD_LIMIT}/{os.getenv("NUMBER_OF_PROCESSORS", "4")}')
+	if not os.path.isfile(PATH_WOT_EXE):
+		_shared.verboseOutput('World of Tanks client not found at', PATH_WOT_EXE, level=_shared.VERBOSE_ERROR)
+		_shared.verboseOutput('Make sure config is correct', level=_shared.VERBOSE_ERROR)
+		os.system('pause')
+		sys.exit(1)
 	fInfo = win32api.GetFileVersionInfo(PATH_WOT_EXE, '\\')
 	gameVersion = _shared.WinFileVersion.fromFileVersionData(fInfo['ProductVersionMS'], fInfo['ProductVersionLS'])
+	_shared.verboseOutput('Game Version Found:', gameVersion)
 	dirOutput = os.path.join(DIR_DATA, str(gameVersion), 'res')
 	_shared.verboseOutput('Extract Packages Output Dir:', dirOutput, level=_shared.VERBOSE_PROGRESS)
 	# unpack packages
@@ -156,7 +225,7 @@ if __name__ == '__main__':
 		decompilePyc = True
 		_shared.verboseOutput('Decompile pyc files to:', dirScriptsOutput, level=_shared.VERBOSE_PROGRESS)
 		if os.path.isdir(dirScriptsOutput):
-			if DECOMPILE_OVERWRITE or _cmdargs.ARGUMENTS.overwrite:
+			if DECOMPILE_OVERWRITE:
 				_shared.verboseOutput('Cleaning Decompile Output Dir', level=_shared.VERBOSE_PROGRESS)
 				shutil.rmtree(dirScriptsOutput)
 			else:
@@ -186,11 +255,14 @@ if __name__ == '__main__':
 			# get all pyc files that need to be decompiled, ignore Lib and site-packages directories since they are python standard libs
 			lFiles = _shared.listAllFiles(dirScripts, '.pyc', ['Lib', 'site-packages'])
 			lenFiles = len(lFiles)
+			if DECOMPILE_MULTITHREAD:
+				# shuffle file list so large pyc spread over multiple workers, may improve performance
+				random.shuffle(lFiles)
 			fileCompiled = 0
 			i = 0
 			lWorkers: List[_shared.DecompileWorker] = []
 			# DECOMPILE_MULTITHREAD = False # DEBUG
-			while i < lenFiles + len(lWorkers):
+			while (i < lenFiles) or len(lWorkers):
 				if DECOMPILE_MULTITHREAD:
 					if i < lenFiles and len(lWorkers) < THREAD_LIMIT:
 						print('\r', end='')
@@ -223,18 +295,28 @@ if __name__ == '__main__':
 					_shared.verboseOutput(f'Decompiling file {f"{i}-{min(i+THREAD_LIMIT, lenFiles)}":>12}, {min((i+THREAD_LIMIT)/lenFiles, 1)*100:>6.2f}%\r', end='', flush=True, level=_shared.VERBOSE_PROGRESS)
 					i += THREAD_LIMIT
 			_shared.verboseOutput('Copying wot python builtin Lib...', level=_shared.VERBOSE_PROGRESS)
+			if os.path.isdir(os.path.join(dirScriptsLibOutput, 'Lib')):
+				shutil.rmtree(os.path.join(dirScriptsLibOutput, 'Lib'))
 			shutil.copytree(os.path.join(dirScripts, 'common', 'Lib'), os.path.join(dirScriptsLibOutput, 'Lib'))
 			_shared.verboseOutput('Copying wot python site-packages...', level=_shared.VERBOSE_PROGRESS)
+			if os.path.isdir(os.path.join(dirScriptsLibOutput, 'site-packages')):
+				shutil.rmtree(os.path.join(dirScriptsLibOutput, 'site-packages'))
 			shutil.copytree(os.path.join(dirScripts, 'common', 'site-packages'), os.path.join(dirScriptsLibOutput, 'site-packages'))
 			_shared.verboseOutput('Updating python import path files...', level=_shared.VERBOSE_PROGRESS)
 			try:
 				with open(os.path.join(_shared.DIR_PYTHON27, 'wotImports.pth'), 'w', encoding='utf-8') as file:
-					file.write(f'# World of Tanks V{str(gameVersion)} decompiled imports\n')
-					for item in os.listdir(dirScriptsOutput):
-						if os.path.isdir(os.path.join(dirScriptsOutput, item)):
-							file.write(f'{os.path.join(dirScriptsOutput, item)}\n')
-					file.write(f'{os.path.join(dirScriptsLibOutput, "Lib")}\n')
-					file.write(f'{os.path.join(dirScriptsLibOutput, "site-packages")}\n')
+					if DECOMPILE_USE_DECOMPILED:
+						file.write(f'# World of Tanks V{str(gameVersion)} decompiled imports\n')
+						for item in os.listdir(dirScriptsOutput):
+							if os.path.isdir(os.path.join(dirScriptsOutput, item)):
+								file.write(f'{os.path.join(dirScriptsOutput, item)}\n')
+						file.write(f'{os.path.join(dirScriptsLibOutput, "Lib")}\n')
+						file.write(f'{os.path.join(dirScriptsLibOutput, "site-packages")}\n')
+					else:
+						file.write(f'# World of Tanks V{str(gameVersion)} scripts imports\n')
+						file.write(f'{dirScripts}\n')
+						file.write(f'{os.path.join(dirScripts, "Lib")}\n')
+						file.write(f'{os.path.join(dirScripts, "site-packages")}\n')
 			except Exception as e:
 				_shared.verboseOutput(traceback.format_exc(), level=_shared.VERBOSE_ERROR)
 			_shared.verboseOutput('\nAll pyc files decompiled', level=_shared.VERBOSE_PROGRESS)
@@ -243,3 +325,5 @@ if __name__ == '__main__':
 	minutes, seconds = divmod(sTotal, 60)
 	_shared.verboseOutput(f'Elapsed Time: {int(minutes)}:{seconds:.3f}\n', level=_shared.VERBOSE_PROGRESS)
 	print(_cmdargs.BANNER_EXIT)
+	os.system('pause')
+	sys.exit(0)

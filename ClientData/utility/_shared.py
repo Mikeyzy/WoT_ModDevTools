@@ -1,5 +1,5 @@
 import _cmdargs
-import json, os, re, subprocess, threading, traceback
+import json, os, re, subprocess, threading, traceback, shutil
 from typing import Any, Dict, List, Tuple, Union
 
 VERBOSE_LEVEL: int = _cmdargs.ARGUMENTS.verbose
@@ -47,15 +47,19 @@ r'''{
 		"decompile": {
 			"overwrite": false,
 			"multithread": true,
-			"output": "scripts_d"
+			"output": "scripts_d",
+			"pythonPathUseDecompiled": true
 		}
+	},
+	"multithread": {
+		"limit": -1
 	}
 }'''
 
 DIR_ROOT: str = os.path.dirname(os.path.abspath(__file__))
 PATH_CONFIG: str = os.path.join(DIR_ROOT, 'utilityConfig.json')
 
-DICT_CONFIG: Dict[str, Union[str, Dict[str, Any]]] = json.loads(STR_DEFAULT_CONFIG)
+DICT_CONFIG: Dict[str, Dict[str, Any]] = json.loads(STR_DEFAULT_CONFIG)
 if os.path.isfile(PATH_CONFIG):
 	try:
 		with open(PATH_CONFIG, 'r', encoding='utf-8') as f:
@@ -223,7 +227,13 @@ class DecompileWorker(threading.Thread):
 			rc = subprocess.run(f'"{PATH_UNCOMPYLE6}" -o "{scriptOutput}" "{pathFile}"', capture_output=True, encoding='utf-8')
 			if rc.returncode != 0:
 				self._verboseOutput(f'Error occurred during decompiling "{pathFile}", exit code: {rc.returncode}', level=VERBOSE_ERROR)
+				if rc.returncode == 3221225725:
+					# recursion limit
+					self._verboseOutput('Recursion limit exceeded', level=VERBOSE_ERROR)
+				else:
+					self._verboseOutput('Failed to decompile', level=VERBOSE_ERROR)
 				os.rename(scriptOutput, scriptOutput + '_error')
+				shutil.copyfile(pathFile, scriptOutput+'c')
 			else:
 				successCount += 1
 		self._errorCount = self._fileCount - successCount
